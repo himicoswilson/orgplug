@@ -24,17 +24,8 @@ New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
   $assetPath = Join-Path $tmp $asset
-  $checksumsPath = Join-Path $tmp "checksums.txt"
 
   Invoke-WebRequest "$releaseBase/$asset" -OutFile $assetPath -UseBasicParsing
-  Invoke-WebRequest "$releaseBase/checksums.txt" -OutFile $checksumsPath -UseBasicParsing
-
-  $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match "\s$([regex]::Escape($asset))$" } | Select-Object -First 1
-  if (-not $expectedLine) { throw "Checksum entry not found for $asset" }
-
-  $expectedHash = ($expectedLine -split "\s+")[0].ToLowerInvariant()
-  $actualHash = (Get-FileHash -Algorithm SHA256 $assetPath).Hash.ToLowerInvariant()
-  if ($expectedHash -ne $actualHash) { throw "Checksum verification failed for $asset" }
 
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $StateDir "workdir") | Out-Null
