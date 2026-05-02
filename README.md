@@ -80,13 +80,13 @@ rules:
   repos:
     plugins/anthropics-skills:
       skills:
-        deny: []
+        deny:
+          - webapp-testing
 
     plugins/knowledge-work-plugins:
       plugins:
-        deny: []
-
-  plugins: {}
+        deny:
+          - design
 ```
 
 ### Rule semantics

@@ -82,8 +82,6 @@ rules:
     plugins/knowledge-work-plugins:
       plugins:
         deny: []
-
-  plugins: {}
 "@ | Set-Content -Path $ConfigFile -Encoding UTF8
     }
   }

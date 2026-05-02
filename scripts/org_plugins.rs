@@ -24,7 +24,6 @@ struct RepoRule {
 #[derive(Debug, Clone, Default)]
 struct Config {
     repos: HashMap<String, RepoRule>,
-    plugins_sync: HashMap<String, bool>,
 }
 
 
@@ -383,12 +382,11 @@ fn warn_stale_submodule_gitlinks(repo_root: &Path, tracked_paths: &[String]) -> 
 fn parse_config(path: &Path) -> Result<Config, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("failed to read config: {e}"))?;
 
-    // Minimal YAML parser for current schema (rules.repos / rules.plugins with deny lists).
+    // Minimal YAML parser for current schema (rules.repos with deny lists).
     let mut cfg = Config::default();
 
     let mut section_stack: Vec<(usize, String)> = Vec::new();
     let mut current_repo: Option<String> = None;
-    let mut current_plugin: Option<String> = None;
     let mut current_list_target: Option<(String, String)> = None; // (kind, name)
 
     for raw in text.lines() {
@@ -438,21 +436,13 @@ fn parse_config(path: &Path) -> Result<Config, String> {
             if path == vec!["version"] {
                 continue;
             }
-            if path == vec!["rules"] || path == vec!["rules", "repos"] || path == vec!["rules", "plugins"] {
+            if path == vec!["rules"] || path == vec!["rules", "repos"] {
                 continue;
             }
 
             // repo key under rules.repos
             if path.len() == 3 && path[0] == "rules" && path[1] == "repos" {
                 current_repo = Some(key.to_string());
-                current_plugin = None;
-                continue;
-            }
-
-            // plugin key under rules.plugins
-            if path.len() == 3 && path[0] == "rules" && path[1] == "plugins" {
-                current_plugin = Some(key.to_string());
-                current_repo = None;
                 continue;
             }
 
@@ -486,13 +476,6 @@ fn parse_config(path: &Path) -> Result<Config, String> {
                 }
             }
 
-            if let Some(plugin_name) = &current_plugin {
-                if path.ends_with(&vec!["sync".to_string()]) {
-                    if let Some(b) = parse_bool(value) {
-                        cfg.plugins_sync.insert(plugin_name.clone(), b);
-                    }
-                }
-            }
         }
     }
 
@@ -519,13 +502,6 @@ fn repo_sync_decision(cfg: &Config, repo_rel: &str) -> Decision {
         if let Some(sync) = rule.sync {
             return if sync { Decision::Allow } else { Decision::Deny };
         }
-    }
-    Decision::Default
-}
-
-fn output_plugin_decision(cfg: &Config, plugin_name: &str) -> Decision {
-    if let Some(sync) = cfg.plugins_sync.get(plugin_name) {
-        return if *sync { Decision::Allow } else { Decision::Deny };
     }
     Decision::Default
 }
@@ -571,9 +547,6 @@ fn build_knowledge_work_repo(
         }
 
         let unique = ensure_unique_name(&plugin_name, used_names);
-        if output_plugin_decision(cfg, &unique) == Decision::Deny {
-            continue;
-        }
 
         let out_dir = dist_plugins.join(&unique);
         copy_dir_filtered(&p, &out_dir)?;
@@ -630,9 +603,6 @@ fn build_anthropic_skills_repo(
         }
 
         let unique = ensure_unique_name(&skill_name_safe, used_names);
-        if output_plugin_decision(cfg, &unique) == Decision::Deny {
-            continue;
-        }
 
         let out_dir = dist_plugins.join(&unique);
         fs::create_dir_all(out_dir.join(".claude-plugin")).map_err(|e| format!("create output dir failed: {e}"))?;

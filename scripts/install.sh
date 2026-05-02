@@ -99,8 +99,6 @@ rules:
     plugins/knowledge-work-plugins:
       plugins:
         deny: []
-
-  plugins: {}
 YAML
   fi
 fi
