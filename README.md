@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/himicoswilson/orgplug/main/scripts/
 
 ## Usage
 
-Run from anywhere after installation (the CLI uses `~/.orgplug/workdir/orgplug` by default):
+Run from anywhere after installation (`build`/`sync` use `~/.orgplug/workdir/orgplug` by default):
 
 ```bash
 orgplug build

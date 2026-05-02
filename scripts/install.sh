@@ -29,23 +29,61 @@ fi
 asset="${BIN_NAME}-${os_slug}-${arch_slug}.tar.gz"
 tmp_dir="$(mktemp -d)"; trap 'rm -rf "$tmp_dir"' EXIT
 
-curl -fsSL "${release_base}/${asset}" -o "${tmp_dir}/${asset}"
-
-mkdir -p "$INSTALL_DIR" "$STATE_DIR/workdir"
-tar -xzf "${tmp_dir}/${asset}" -C "$tmp_dir"
-[ -f "${tmp_dir}/${BIN_NAME}" ] || { echo "Binary ${BIN_NAME} not found in archive" >&2; exit 1; }
-install -m 0755 "${tmp_dir}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
-
-if [ -d "$WORKDIR/.git" ]; then
-  git -C "$WORKDIR" fetch --all --prune
-  git -C "$WORKDIR" pull --ff-only || true
-else
-  rm -rf "$WORKDIR"
-  git clone "$REPO_URL" "$WORKDIR"
+is_tty=0
+if [ -t 1 ]; then
+  is_tty=1
 fi
 
-git -C "$WORKDIR" submodule sync --recursive
-git -C "$WORKDIR" submodule update --init --recursive
+run_step() {
+  local label="$1"
+  shift
+  local log_file="$tmp_dir/step.log"
+
+  if [ "$is_tty" -eq 1 ]; then
+    "$@" >"$log_file" 2>&1 &
+    local pid=$!
+    local spin='|/-\\'
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r[%c] %s' "${spin:i++%${#spin}:1}" "$label"
+      sleep 0.1
+    done
+    wait "$pid"
+    local status=$?
+    if [ "$status" -eq 0 ]; then
+      printf '\r[ok] %s\n' "$label"
+      return 0
+    fi
+    printf '\r[fail] %s\n' "$label" >&2
+    cat "$log_file" >&2
+    exit "$status"
+  fi
+
+  echo "- $label"
+  if "$@" >"$log_file" 2>&1; then
+    return 0
+  fi
+  echo "[fail] $label" >&2
+  cat "$log_file" >&2
+  exit 1
+}
+
+run_step "Downloading release binary" curl -fsSL "${release_base}/${asset}" -o "${tmp_dir}/${asset}"
+run_step "Preparing install directories" mkdir -p "$INSTALL_DIR" "$STATE_DIR/workdir"
+run_step "Extracting release archive" tar -xzf "${tmp_dir}/${asset}" -C "$tmp_dir"
+
+[ -f "${tmp_dir}/${BIN_NAME}" ] || { echo "Binary ${BIN_NAME} not found in archive" >&2; exit 1; }
+run_step "Installing orgplug binary" install -m 0755 "${tmp_dir}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+
+if [ -d "$WORKDIR/.git" ]; then
+  run_step "Updating managed workdir" git -C "$WORKDIR" fetch --all --prune
+  run_step "Fast-forwarding managed workdir" sh -c "git -C '$WORKDIR' pull --ff-only || true"
+else
+  run_step "Cloning managed workdir" sh -c "rm -rf '$WORKDIR' && git clone '$REPO_URL' '$WORKDIR'"
+fi
+
+run_step "Syncing submodules" git -C "$WORKDIR" submodule sync --recursive
+run_step "Updating submodules" git -C "$WORKDIR" submodule update --init --recursive
 
 if [ ! -f "$CONFIG_FILE" ]; then
   if ! curl -fsSL "$DEFAULT_CONFIG_URL" -o "$CONFIG_FILE"; then

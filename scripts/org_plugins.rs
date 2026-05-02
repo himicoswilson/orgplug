@@ -36,8 +36,6 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let repo_root = resolve_repo_root()?;
-
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         print_usage();
@@ -45,10 +43,22 @@ fn run() -> Result<(), String> {
     }
 
     match args[1].as_str() {
-        "doctor" => cmd_doctor(&repo_root),
-        "update" => cmd_update(&repo_root),
-        "build" => cmd_build(&repo_root),
-        "sync" => cmd_sync(&repo_root, &args[2..]),
+        "doctor" => {
+            let repo_root = resolve_repo_root()?;
+            cmd_doctor(&repo_root)
+        }
+        "update" => {
+            let repo_root = resolve_repo_root()?;
+            cmd_update(&repo_root)
+        }
+        "build" => {
+            let repo_root = resolve_managed_workdir_root()?;
+            cmd_build(&repo_root)
+        }
+        "sync" => {
+            let repo_root = resolve_managed_workdir_root()?;
+            cmd_sync(&repo_root, &args[2..])
+        }
         "-h" | "--help" | "help" => {
             print_usage();
             Ok(())
@@ -281,14 +291,26 @@ fn resolve_repo_root() -> Result<PathBuf, String> {
         return Ok(cwd);
     }
 
+    if let Ok(workdir) = resolve_managed_workdir_root() {
+        return Ok(workdir);
+    }
+
+    Err("repository workdir not found. Run from repo root or initialize ~/.orgplug/workdir/orgplug".to_string())
+}
+
+fn resolve_managed_workdir_root() -> Result<PathBuf, String> {
     if let Some(home) = env::var_os("HOME") {
         let workdir = PathBuf::from(home).join(".orgplug").join("workdir").join("orgplug");
         if workdir.join(".gitmodules").exists() && workdir.join("plugins").exists() {
             return Ok(workdir);
         }
+        return Err(format!(
+            "managed workdir not found: {}. Run installer first.",
+            workdir.display()
+        ));
     }
 
-    Err("repository workdir not found. Run from repo root or initialize ~/.orgplug/workdir/orgplug".to_string())
+    Err("HOME is not set; cannot resolve managed workdir".to_string())
 }
 
 fn resolve_config_path(repo_root: &Path) -> Result<PathBuf, String> {
