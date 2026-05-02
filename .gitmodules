@@ -1,0 +1,6 @@
+[submodule "plugins/knowledge-work-plugins"]
+	path = plugins/knowledge-work-plugins
+	url = https://github.com/anthropics/knowledge-work-plugins.git
+[submodule "plugins/anthropics-skills"]
+	path = plugins/anthropics-skills
+	url = https://github.com/anthropics/skills.git

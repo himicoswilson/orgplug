@@ -1,0 +1,13 @@
+version: 1
+
+rules:
+  repos:
+    plugins/anthropics-skills:
+      skills:
+        deny: []
+
+    plugins/knowledge-work-plugins:
+      plugins:
+        deny: []
+
+  plugins: {}
