@@ -4,7 +4,7 @@ Set-StrictMode -Version Latest
 $Owner = "himicoswilson"
 $Repo = "orgplug"
 $BinName = "orgplug.exe"
-$InstallDir = Join-Path $HOME "bin"
+$InstallDir = Join-Path $HOME ".local\bin"
 $StateDir = Join-Path $HOME ".orgplug"
 $WorkDir = Join-Path $StateDir "workdir\orgplug"
 $ConfigFile = Join-Path $StateDir "config.yaml"
@@ -22,29 +22,48 @@ else { $releaseBase = "https://github.com/$Owner/$Repo/releases/download/$Versio
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("orgplug-install-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
+function Run-Step {
+  param(
+    [Parameter(Mandatory = $true)][string]$Label,
+    [Parameter(Mandatory = $true)][scriptblock]$Action
+  )
+
+  Write-Host "- $Label"
+  try {
+    & $Action
+  }
+  catch {
+    Write-Host "[fail] $Label"
+    throw
+  }
+}
+
 try {
   $assetPath = Join-Path $tmp $asset
 
-  Invoke-WebRequest "$releaseBase/$asset" -OutFile $assetPath -UseBasicParsing
-
-  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $StateDir "workdir") | Out-Null
-  Expand-Archive -Path $assetPath -DestinationPath $tmp -Force
+  Run-Step "Downloading release binary" { Invoke-WebRequest "$releaseBase/$asset" -OutFile $assetPath -UseBasicParsing }
+  Run-Step "Preparing install directories" {
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $StateDir "workdir") | Out-Null
+  }
+  Run-Step "Extracting release archive" { Expand-Archive -Path $assetPath -DestinationPath $tmp -Force }
 
   $binPath = Join-Path $tmp $BinName
   if (-not (Test-Path $binPath)) { throw "Binary $BinName not found in archive" }
-  Copy-Item $binPath (Join-Path $InstallDir $BinName) -Force
+  Run-Step "Installing orgplug binary" { Copy-Item $binPath (Join-Path $InstallDir $BinName) -Force }
 
   if (Test-Path (Join-Path $WorkDir ".git")) {
-    git -C $WorkDir fetch --all --prune
-    try { git -C $WorkDir pull --ff-only } catch { }
+    Run-Step "Updating managed workdir" { git -C $WorkDir fetch --all --prune | Out-Null }
+    Run-Step "Fast-forwarding managed workdir" { try { git -C $WorkDir pull --ff-only | Out-Null } catch { } }
   } else {
-    if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
-    git clone $RepoUrl $WorkDir
+    Run-Step "Cloning managed workdir" {
+      if (Test-Path $WorkDir) { Remove-Item -Recurse -Force $WorkDir }
+      git clone $RepoUrl $WorkDir | Out-Null
+    }
   }
 
-  git -C $WorkDir submodule sync --recursive
-  git -C $WorkDir submodule update --init --recursive
+  Run-Step "Syncing submodules" { git -C $WorkDir submodule sync --recursive | Out-Null }
+  Run-Step "Updating submodules" { git -C $WorkDir submodule update --init --recursive | Out-Null }
 
   New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
   if (-not (Test-Path $ConfigFile)) {
@@ -70,8 +89,10 @@ rules:
   }
 
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  if (-not $userPath.Split(';') -contains $InstallDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$InstallDir", "User")
+  $pathEntries = if ([string]::IsNullOrEmpty($userPath)) { @() } else { $userPath.Split(';') }
+  if (-not ($pathEntries -contains $InstallDir)) {
+    $newUserPath = if ([string]::IsNullOrEmpty($userPath)) { $InstallDir } else { "$userPath;$InstallDir" }
+    [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
     Write-Host "Added $InstallDir to User PATH. Restart terminal to apply."
   }
 

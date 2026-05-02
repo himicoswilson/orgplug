@@ -31,6 +31,18 @@ export ORG_PLUG_VERSION=v0.1.0
 curl -fsSL https://raw.githubusercontent.com/himicoswilson/orgplug/main/scripts/install.sh | bash
 ```
 
+### Uninstall
+
+Default behavior removes both binary and managed state/config:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/himicoswilson/orgplug/main/scripts/uninstall.sh | bash
+```
+
+```powershell
+iwr https://raw.githubusercontent.com/himicoswilson/orgplug/main/scripts/uninstall.ps1 -UseBasicParsing | iex
+```
+
 ---
 
 ## Usage
