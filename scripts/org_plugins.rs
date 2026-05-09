@@ -19,6 +19,8 @@ struct RepoRule {
     sync: Option<bool>,
     plugins: DenyList,
     skills: DenyList,
+    official_plugins: DenyList,
+    official_external: DenyList,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -99,6 +101,9 @@ fn cmd_doctor(repo_root: &Path) -> Result<(), String> {
         }
         if rel.ends_with("anthropics-skills") {
             validate_anthropic_skills_structure(&p)?;
+        }
+        if rel.ends_with("claude-plugins-official") {
+            validate_claude_plugins_official_structure(&p)?;
         }
     }
 
@@ -186,6 +191,19 @@ fn cmd_build(repo_root: &Path) -> Result<(), String> {
 
         if rel.ends_with("anthropics-skills") {
             build_anthropic_skills_repo(
+                repo_root,
+                &config,
+                &sm_path,
+                &rel,
+                &dist_plugins,
+                &mut used_names,
+                &mut managed_names,
+            )?;
+            continue;
+        }
+
+        if rel.ends_with("claude-plugins-official") {
+            build_claude_plugins_official_repo(
                 repo_root,
                 &config,
                 &sm_path,
@@ -416,6 +434,12 @@ fn parse_config(path: &Path) -> Result<Config, String> {
                         "repo_skills" => {
                             cfg.repos.entry(name.clone()).or_default().skills.deny.insert(item);
                         }
+                        "repo_official_plugins" => {
+                            cfg.repos.entry(name.clone()).or_default().official_plugins.deny.insert(item);
+                        }
+                        "repo_official_external" => {
+                            cfg.repos.entry(name.clone()).or_default().official_external.deny.insert(item);
+                        }
                         _ => {}
                     }
                 }
@@ -474,8 +498,27 @@ fn parse_config(path: &Path) -> Result<Config, String> {
                     current_list_target = Some(("repo_skills".to_string(), repo_name.clone()));
                     continue;
                 }
+                if path.ends_with(&vec!["official_plugins".to_string(), "allow".to_string()]) {
+                    continue;
+                }
+                if path.ends_with(&vec!["official_plugins".to_string(), "deny".to_string()]) {
+                    if value == "[]" {
+                        continue;
+                    }
+                    current_list_target = Some(("repo_official_plugins".to_string(), repo_name.clone()));
+                    continue;
+                }
+                if path.ends_with(&vec!["official_external".to_string(), "allow".to_string()]) {
+                    continue;
+                }
+                if path.ends_with(&vec!["official_external".to_string(), "deny".to_string()]) {
+                    if value == "[]" {
+                        continue;
+                    }
+                    current_list_target = Some(("repo_official_external".to_string(), repo_name.clone()));
+                    continue;
+                }
             }
-
         }
     }
 
@@ -512,6 +555,8 @@ fn deny_decision(list: &DenyList, name: &str) -> Decision {
     }
     Decision::Default
 }
+
+// ── Repo builders ────────────────────────────────────────────────────────────
 
 fn build_knowledge_work_repo(
     _repo_root: &Path,
@@ -632,6 +677,74 @@ fn build_anthropic_skills_repo(
     Ok(())
 }
 
+/// Build plugins from the claude-plugins-official repo.
+/// Scans both plugins/ and external_plugins/ subdirectories;
+/// any directory containing .claude-plugin/plugin.json is treated as a plugin.
+fn build_claude_plugins_official_repo(
+    _repo_root: &Path,
+    cfg: &Config,
+    sm_path: &Path,
+    sm_rel: &str,
+    dist_plugins: &Path,
+    used_names: &mut HashSet<String>,
+    managed_names: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let (sha, _remote) = submodule_meta(sm_path)?;
+    let sha_short: String = sha.chars().take(12).collect();
+
+    let rule = cfg.repos.get(sm_rel);
+
+    // (subdir name, whether it is the external_plugins directory)
+    let subdirs: &[(&str, bool)] = &[
+        ("plugins", false),
+        ("external_plugins", true),
+    ];
+
+    for (subdir_name, is_external) in subdirs {
+        let subdir = sm_path.join(subdir_name);
+        if !subdir.is_dir() {
+            continue;
+        }
+
+        for plugin_dir in sorted_dirs(&subdir)? {
+            let plugin_json = plugin_dir.join(".claude-plugin/plugin.json");
+            if !plugin_json.exists() {
+                // No plugin.json — skip (e.g. clangd-lsp which only has LICENSE/README).
+                continue;
+            }
+
+            let plugin_name_raw = jq_read_string(&plugin_json, ".name")?;
+            let plugin_name = validate_name(&plugin_name_raw)?;
+
+            // Use official_external deny list for external_plugins/, official_plugins for plugins/.
+            if let Some(r) = rule {
+                let deny_list = if *is_external { &r.official_external } else { &r.official_plugins };
+                if deny_decision(deny_list, &plugin_name) == Decision::Deny {
+                    continue;
+                }
+            }
+
+            let unique = ensure_unique_name(&plugin_name, used_names);
+            let out_dir = dist_plugins.join(&unique);
+            copy_dir_filtered(&plugin_dir, &out_dir)?;
+
+            let mut plugin_version = jq_read_string(&plugin_json, ".version").unwrap_or_default();
+            if plugin_version.is_empty() {
+                plugin_version = "0.0.0".to_string();
+            }
+
+            ensure_plugin_description(&out_dir)?;
+            write_version_json(&out_dir, &format!("{}+{}", plugin_version, sha_short))?;
+
+            managed_names.insert(unique);
+        }
+    }
+
+    Ok(())
+}
+
+// ── Validators ───────────────────────────────────────────────────────────────
+
 fn validate_knowledge_work_structure(path: &Path) -> Result<(), String> {
     let mut found = 0usize;
     for entry in fs::read_dir(path).map_err(|e| format!("read_dir failed: {e}"))? {
@@ -654,6 +767,19 @@ fn validate_anthropic_skills_structure(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+fn validate_claude_plugins_official_structure(path: &Path) -> Result<(), String> {
+    let plugins = path.join("plugins");
+    let external = path.join("external_plugins");
+    if !plugins.is_dir() && !external.is_dir() {
+        return Err(
+            "claude-plugins-official: missing both plugins/ and external_plugins/ directories".to_string(),
+        );
+    }
+    Ok(())
+}
+
+// ── Git helpers ──────────────────────────────────────────────────────────────
 
 fn submodule_meta(sm_path: &Path) -> Result<(String, String), String> {
     let sha = run_capture(sm_path, "git", &["rev-parse", "HEAD"])?;
@@ -709,6 +835,8 @@ fn jq_read_string(file: &Path, expr: &str) -> Result<String, String> {
     )
 }
 
+// ── Name helpers ─────────────────────────────────────────────────────────────
+
 fn validate_name(name: &str) -> Result<String, String> {
     let n = name.trim().to_lowercase();
     if n.is_empty() || n == "." || n == ".." {
@@ -747,6 +875,8 @@ fn ensure_unique_name(desired: &str, used: &mut HashSet<String>) -> String {
         i += 1;
     }
 }
+
+// ── File helpers ─────────────────────────────────────────────────────────────
 
 fn copy_dir_filtered(src: &Path, dst: &Path) -> Result<(), String> {
     if dst.exists() {
@@ -912,7 +1042,6 @@ fn sorted_dirs(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(dirs)
 }
 
-
 fn remove_junk(root: &Path) -> Result<(), String> {
     remove_junk_inner(root)?;
     Ok(())
@@ -932,6 +1061,8 @@ fn remove_junk_inner(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ── String helpers ───────────────────────────────────────────────────────────
 
 fn json_escape(s: &str) -> String {
     let mut out = String::new();

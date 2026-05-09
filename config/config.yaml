@@ -3,11 +3,19 @@ version: 1
 rules:
   repos:
     plugins/anthropics-skills:
+      sync: true
       skills:
         deny:
           - webapp-testing
 
     plugins/knowledge-work-plugins:
+      sync: true
       plugins:
-        deny:
-          - design
+        deny: []
+
+    plugins/claude-plugins-official:
+      sync: true
+      official_plugins:
+        deny: []
+      official_external:
+        deny: []

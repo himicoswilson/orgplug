@@ -4,3 +4,6 @@
 [submodule "plugins/anthropics-skills"]
 	path = plugins/anthropics-skills
 	url = https://github.com/anthropics/skills.git
+[submodule "plugins/claude-plugins-official"]
+	path = plugins/claude-plugins-official
+	url = https://github.com/anthropics/claude-plugins-official.git
